@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <title>Dashboard — Mane Maison</title>
+    <meta name="theme-color" content="#5e0a2b" />
+    <link rel="icon" href="logo.jpg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;1,500&family=Hanken+Grotesk:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body data-page="dashboard">
+    <main class="pg wrap">
+      <form id="gate" class="bar">
+        <h2>CEO Access</h2>
+        <input
+          id="pin"
+          type="password"
+          placeholder="Passcode"
+          autocomplete="current-password"
+        /><button id="lock">Unlock</button>
+      </form>
+      <div id="main" hidden>
+        <div class="live"><i></i>Live overview</div>
+        <br />
+        <div class="kpis" id="k"></div>
+        <div class="rings" id="r"></div>
+        <h3>Revenue, last 7 days</h3>
+        <br />
+        <div class="bars" id="b"></div>
+        <br /><br />
+        <h3>Inventory</h3>
+        <div class="tbl"><table id="inv"></table></div>
+        <br />
+        <form id="np" style="grid-template-columns: repeat(auto-fit, minmax(130px, 1fr))">
+          <input name="n" placeholder="Product name" required /><input
+            name="i"
+            placeholder="Image file (optional), e.g. bag.jpg"
+          /><select name="c">
+            <option>Wigs</option>
+            <option>Accessories</option>
+            <option>Care</option></select
+          ><input name="p" type="number" min="0" placeholder="Price" required /><input
+            name="s"
+            type="number"
+            min="0"
+            placeholder="Stock"
+            required
+          /><button>Add product</button>
+        </form>
+        <br />
+        <h3>Orders</h3>
+        <div class="tbl"><table id="ord"></table></div>
+        <br />
+        <h3>Upcoming bookings</h3>
+        <div class="tbl"><table id="bk"></table></div>
+        <br />
+        <h3>Brand logo</h3>
+        <div class="logo-tool">
+          <img id="lp" alt="Current logo" />
+          <div class="lt">
+            <input id="lf" type="file" accept="image/*" aria-label="Upload logo" />
+            <div class="lrow">
+              <input id="lu" placeholder="Logo link, e.g. logo.jpg" /><button
+                type="button"
+                id="ls"
+              >
+                Use link</button
+              ><button type="button" class="ghost" id="lr">Reset to logo.jpg</button>
+            </div>
+            <small
+              >Uploads are resized automatically (max 800 px) and applied across the
+              site.</small
+            >
+          </div>
+        </div>
+      </div>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>
