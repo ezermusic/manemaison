@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <title>Track — Mane Maison</title>
+    <meta name="theme-color" content="#5e0a2b" />
+    <link rel="icon" href="logo.jpg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;1,500&family=Hanken+Grotesk:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body data-page="track">
+    <main class="pg wrap">
+      <section class="two">
+        <div>
+          <h1>Track</h1>
+          <br />
+          <p>
+            Enter your order or booking number (for example MM-1001 or BK-1001) and the
+            phone number you used.
+          </p>
+        </div>
+        <div>
+          <form id="tf">
+            <select name="kind" aria-label="Type">
+              <option value="order">Order</option>
+              <option value="booking">Booking</option></select
+            ><input name="ref" placeholder="Number, e.g. MM-1001" required /><input
+              name="phone"
+              type="tel"
+              placeholder="Phone number"
+              required
+            /><button>Check status</button>
+          </form>
+          <br />
+          <div id="tr"></div>
+        </div>
+      </section>
+    </main>
+    <script src="app.js"></script>
+    <script src="customer.js"></script>
+  </body>
+</html>

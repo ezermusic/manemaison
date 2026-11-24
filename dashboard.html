@@ -8,6 +8,7 @@
     />
     <title>Dashboard — Mane Maison</title>
     <meta name="theme-color" content="#5e0a2b" />
+    <meta name="robots" content="noindex" />
     <link rel="icon" href="logo.jpg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link
@@ -16,7 +17,7 @@
     />
     <link rel="stylesheet" href="style.css" />
   </head>
-  <body data-page="dashboard">
+  <body data-page="admin" data-admin="dashboard">
     <main class="pg wrap">
       <form id="gate" class="bar">
         <h2>CEO Access</h2>
@@ -27,62 +28,11 @@
           autocomplete="current-password"
         /><button id="lock">Unlock</button>
       </form>
-      <div id="main" hidden>
-        <div class="live"><i></i>Live overview</div>
-        <br />
-        <div class="kpis" id="k"></div>
-        <div class="rings" id="r"></div>
-        <h3>Revenue, last 7 days</h3>
-        <br />
-        <div class="bars" id="b"></div>
-        <br /><br />
-        <h3>Inventory</h3>
-        <div class="tbl"><table id="inv"></table></div>
-        <br />
-        <form id="np" style="grid-template-columns: repeat(auto-fit, minmax(130px, 1fr))">
-          <input name="n" placeholder="Product name" required /><input
-            name="i"
-            placeholder="Image file (optional), e.g. bag.jpg"
-          /><select name="c">
-            <option>Wigs</option>
-            <option>Accessories</option>
-            <option>Care</option></select
-          ><input name="p" type="number" min="0" placeholder="Price" required /><input
-            name="s"
-            type="number"
-            min="0"
-            placeholder="Stock"
-            required
-          /><button>Add product</button>
-        </form>
-        <br />
-        <h3>Orders</h3>
-        <div class="tbl"><table id="ord"></table></div>
-        <br />
-        <h3>Upcoming bookings</h3>
-        <div class="tbl"><table id="bk"></table></div>
-        <br />
-        <h3>Brand logo</h3>
-        <div class="logo-tool">
-          <img id="lp" alt="Current logo" />
-          <div class="lt">
-            <input id="lf" type="file" accept="image/*" aria-label="Upload logo" />
-            <div class="lrow">
-              <input id="lu" placeholder="Logo link, e.g. logo.jpg" /><button
-                type="button"
-                id="ls"
-              >
-                Use link</button
-              ><button type="button" class="ghost" id="lr">Reset to logo.jpg</button>
-            </div>
-            <small
-              >Uploads are resized automatically (max 800 px) and applied across the
-              site.</small
-            >
-          </div>
-        </div>
-      </div>
+      <div id="main" hidden></div>
     </main>
     <script src="app.js"></script>
+    <script src="admin-tools.js"></script>
+    <script src="admin-studio.js"></script>
+    <script src="admin.js"></script>
   </body>
 </html>

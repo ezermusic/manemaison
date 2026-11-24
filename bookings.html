@@ -23,21 +23,45 @@
           <h1>Book the studio</h1>
           <br />
           <p>
-            Pick one or more services from any category, then a day and a free slot. We
-            confirm on WhatsApp.
+            Pick one or more services, a stylist, a day and a free time. Longer services
+            block the time they need. We confirm on WhatsApp.
           </p>
         </div>
         <form id="bf">
           <div id="svc"></div>
           <p class="selnote" id="sel"></p>
-          <input type="date" id="dt" required aria-label="Date" />
+          <label class="fl">Stylist<select id="sty" aria-label="Stylist"></select></label
+          ><input type="date" id="dt" required aria-label="Date" />
           <div class="slots" id="sl"></div>
           <input name="n" placeholder="Full name" required /><input
             name="p"
             type="tel"
             placeholder="Phone"
             required
-          /><button>Confirm booking</button>
+          /><input name="e" type="email" placeholder="Email (needed to pay online)" />
+          <div class="g2 codes">
+            <input id="dc" placeholder="Discount code" autocomplete="off" /><input
+              id="gc"
+              placeholder="Gift card code"
+              autocomplete="off"
+            />
+          </div>
+          <p><button type="button" class="ghost" id="ap">Apply codes</button></p>
+          <div class="sumbox" id="bill"></div>
+          <fieldset class="pay" id="depay" hidden>
+            <legend>Pay your deposit</legend>
+            <p class="meta" id="depnote"></p>
+            <label
+              ><input type="radio" name="m" value="online" checked /> Card or Mobile Money
+              (online)</label
+            ><label
+              ><input type="radio" name="m" value="momo" /> Send Mobile Money to
+              0537751108</label
+            >
+          </fieldset>
+          <input name="t" id="btx" placeholder="Mobile Money transaction ID" hidden />
+          <button>Confirm booking</button>
+          <div class="sumbox" id="done" hidden></div>
         </form>
       </section>
     </main>

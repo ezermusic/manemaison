@@ -96,139 +96,241 @@ const cart = {
   },
 };
 /* SERVICE PRICES (GH₵) are PLACEHOLDERS: edit the numbers below. Format: [service name, price]. 0 shows "Free"; null shows "On request" and is left out of the total. */
+/* Product ids may be numbers (sample data) or text (a database), so keep them as they are. */
+const pid = (v) => (v !== "" && !isNaN(v) ? +v : v);
+const money2 = (n) => Math.round(n * 100) / 100;
+const toMin = (t) => +t.slice(0, 2) * 60 + +t.slice(3, 5);
+const fmtMin = (m) =>
+  String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
+const durTxt = (m) =>
+  (
+    (m >= 60 ? Math.floor(m / 60) + " h " : "") + (m % 60 ? (m % 60) + " min" : "")
+  ).trim() || "0 min";
+const stars = (n) => "★".repeat(Math.round(n)) + "☆".repeat(5 - Math.round(n));
+const nextRef = (list, prefix) =>
+  prefix +
+  (Math.max(
+    1000,
+    ...list.map((x) => parseInt(String(x.ref || "").replace(/\D/g, "")) || 0),
+  ) +
+    1);
+const trackUrl = () => new URL("track.html", location.href).href;
+/* Studio settings with defaults (edited in Management > Settings). */
+const studioCfg = (S) => ({
+  open: S.open || "09:00",
+  close: S.close || "18:00",
+  slot: S.slot || 60,
+  closedDays: S.closedDays || [0],
+  closedDates: S.closedDates || [],
+  stylists:
+    S.stylists && S.stylists.length
+      ? S.stylists
+      : [{ id: 1, name: "Studio stylist", active: true }],
+  deposit: Object.assign({ on: false, type: "percent", value: 20, note: "" }, S.deposit),
+  msgs: Object.assign(
+    {
+      reminder:
+        "Hello {name}, a reminder of your appointment at Mane Maison Studio tomorrow, {date} at {time} with {stylist}. Services: {services}. Please reply to confirm or to reschedule. See you soon!",
+      confirm:
+        "Hello {name}, your booking {ref} at Mane Maison Studio is confirmed for {date} at {time} with {stylist}. Services: {services}. We look forward to seeing you!",
+    },
+    S.msgs,
+  ),
+  confirmPrompt: S.confirmPrompt !== false,
+});
+/* Discount codes and gift cards (collections: promos, giftcards). */
+async function checkPromo(code, subtotal, scope) {
+  code = (code || "").trim().toUpperCase();
+  if (!code) return { amount: 0 };
+  const p = (await db.get("promos")).find((x) => x.code == code);
+  if (!p || p.active === false) return { error: "Discount code not recognised" };
+  if (p.expires && p.expires < day(0)) return { error: "That discount code has expired" };
+  if (p.maxUses && (p.used || 0) >= p.maxUses)
+    return { error: "That discount code has reached its limit" };
+  if (p.scope && p.scope != "all" && p.scope != scope)
+    return { error: "That code is for " + p.scope + " purchases only" };
+  if (p.minSpend && subtotal < p.minSpend)
+    return { error: "Minimum spend for that code is " + money(p.minSpend) };
+  return {
+    amount: money2(
+      p.type == "percent" ? (subtotal * p.value) / 100 : Math.min(p.value, subtotal),
+    ),
+    promo: p,
+  };
+}
+async function checkGift(code, due) {
+  code = (code || "").trim().toUpperCase();
+  if (!code) return { amount: 0 };
+  const g = (await db.get("giftcards")).find((x) => x.code == code);
+  if (!g || g.active === false) return { error: "Gift card not recognised" };
+  if (g.expires && g.expires < day(0)) return { error: "That gift card has expired" };
+  if (!(g.balance > 0)) return { error: "That gift card has no balance left" };
+  return { amount: money2(Math.min(g.balance, due)), card: g };
+}
+async function useCodes(promo, card, giftAmt, ref) {
+  if (promo) {
+    const L = await db.get("promos"),
+      x = L.find((y) => y.id == promo.id);
+    if (x) x.used = (x.used || 0) + 1;
+    await db.put("promos", L);
+  }
+  if (card && giftAmt > 0) {
+    const L = await db.get("giftcards"),
+      x = L.find((y) => y.id == card.id);
+    if (x) {
+      x.balance = money2(x.balance - giftAmt);
+      (x.history = x.history || []).push({ date: day(0), amount: -giftAmt, ref });
+    }
+    await db.put("giftcards", L);
+  }
+}
+const wish = {
+  get: () => JSON.parse(localStorage["mm:wish"] || "[]"),
+  set(w) {
+    localStorage["mm:wish"] = JSON.stringify(w);
+    const c = $("#wc");
+    if (c) c.textContent = w.length;
+    $$("[data-wish]").forEach((b) => {
+      const on = w.map(String).includes(b.dataset.wish);
+      b.classList.toggle("on", on);
+      b.textContent = on ? "♥" : "♡";
+    });
+  },
+};
+/* SERVICES: [name, price (GH₵, null = on request), duration in minutes]. Prices and durations are PLACEHOLDERS: edit them here. */
 const SERVICES = [
   [
     "Hair Styling",
     [
-      ["Wash and blow-dry", 80],
-      ["Silk press and flat ironing", 250],
-      ["Curls, waves and heat styling", 150],
-      ["Updos, bridal and event styling", 300],
-      ["Braids and plaits (cornrows, box braids, knotless braids, twists)", 400],
-      ["Ponytails, buns and sleek styles", 120],
-      ["Extension styling and installs (sew-in, clip-in, tape-in)", 350],
+      ["Wash and blow-dry", 80, 45],
+      ["Silk press and flat ironing", 250, 90],
+      ["Curls, waves and heat styling", 150, 60],
+      ["Updos, bridal and event styling", 300, 90],
+      ["Braids and plaits (cornrows, box braids, knotless braids, twists)", 400, 240],
+      ["Ponytails, buns and sleek styles", 120, 60],
+      ["Extension styling and installs (sew-in, clip-in, tape-in)", 350, 150],
     ],
   ],
   [
     "Hair Color",
     [
-      ["Full color and root touch-up", 450],
-      ["Highlights, lowlights and balayage", 700],
-      ["Ombré and fashion colors", 600],
-      ["Gray coverage", 350],
-      ["Toning and color correction", 400],
+      ["Full color and root touch-up", 450, 150],
+      ["Highlights, lowlights and balayage", 700, 210],
+      ["Ombré and fashion colors", 600, 180],
+      ["Gray coverage", 350, 120],
+      ["Toning and color correction", 400, 90],
     ],
   ],
   [
     "Hair Treatments & Care",
     [
-      ["Deep conditioning", 180],
-      ["Protein and moisture treatments", 200],
-      ["Scalp treatment and scalp massage", 150],
-      ["Hair steaming", 120],
-      ["Keratin and smoothing treatments", 600],
-      ["Dandruff and hair-loss care", 250],
-      ["Trim and split-end removal", 80],
+      ["Deep conditioning", 180, 60],
+      ["Protein and moisture treatments", 200, 60],
+      ["Scalp treatment and scalp massage", 150, 45],
+      ["Hair steaming", 120, 30],
+      ["Keratin and smoothing treatments", 600, 180],
+      ["Dandruff and hair-loss care", 250, 60],
+      ["Trim and split-end removal", 80, 30],
     ],
   ],
   [
     "Cutting & Shaping",
     [
-      ["Women's and men's cuts", 100],
-      ["Children's cuts", 60],
-      ["Fringe/bang trims", 40],
-      ["Beard trim and shaping", 50],
+      ["Women's and men's cuts", 100, 45],
+      ["Children's cuts", 60, 30],
+      ["Fringe/bang trims", 40, 15],
+      ["Beard trim and shaping", 50, 30],
     ],
   ],
   [
     "Wig Services",
     [
-      ["Wig installation (lace front, closure, full lace)", 350],
-      ["Custom wig making", 800],
-      ["Wig revamping and restoration", 300],
-      ["Professional wig coloring and toning", 500],
-      ["Wig styling (curl, straighten, cut, bleach knots, pluck hairline)", 250],
-      ["Wig washing and maintenance", 120],
-      ["Wig consultation and fitting", 50],
+      ["Wig installation (lace front, closure, full lace)", 350, 90],
+      ["Custom wig making", 800, 240],
+      ["Wig revamping and restoration", 300, 120],
+      ["Professional wig coloring and toning", 500, 150],
+      ["Wig styling (curl, straighten, cut, bleach knots, pluck hairline)", 250, 90],
+      ["Wig washing and maintenance", 120, 60],
+      ["Wig consultation and fitting", 50, 30],
     ],
   ],
   [
     "Hair Removal",
     [
-      ["Waxing (brows, lip, face, underarms, legs, bikini)", 120],
-      ["Threading", 60],
-      ["Sugaring", 130],
+      ["Waxing (brows, lip, face, underarms, legs, bikini)", 120, 45],
+      ["Threading", 60, 30],
+      ["Sugaring", 130, 45],
     ],
   ],
   [
     "Nails",
     [
-      ["Manicure and pedicure", 180],
-      ["Gel polish and acrylics", 250],
-      ["Nail extensions and nail art", 300],
-      ["Nail repair and removal", 80],
+      ["Manicure and pedicure", 180, 75],
+      ["Gel polish and acrylics", 250, 90],
+      ["Nail extensions and nail art", 300, 120],
+      ["Nail repair and removal", 80, 30],
     ],
   ],
   [
     "Skin Care",
     [
-      ["Facials (cleansing, hydrating, anti-aging, acne)", 300],
-      ["Exfoliation and deep-cleansing treatments", 250],
-      ["Chemical peels and dermaplaning", 400],
-      ["Back and body facials", 350],
+      ["Facials (cleansing, hydrating, anti-aging, acne)", 300, 60],
+      ["Exfoliation and deep-cleansing treatments", 250, 60],
+      ["Chemical peels and dermaplaning", 400, 60],
+      ["Back and body facials", 350, 75],
     ],
   ],
   [
     "Brows & Lashes",
     [
-      ["Eyebrow shaping, tinting and lamination", 100],
-      ["Microblading", 800],
-      ["Lash lifts and tints", 250],
-      ["Eyelash extensions (classic, hybrid, volume)", 350],
+      ["Eyebrow shaping, tinting and lamination", 100, 30],
+      ["Microblading", 800, 150],
+      ["Lash lifts and tints", 250, 60],
+      ["Eyelash extensions (classic, hybrid, volume)", 350, 120],
     ],
   ],
   [
     "Makeup",
     [
-      ["Everyday and event makeup", 250],
-      ["Bridal makeup and trials", 800],
-      ["Makeup lessons", 400],
-      ["Airbrush makeup", 500],
+      ["Everyday and event makeup", 250, 60],
+      ["Bridal makeup and trials", 800, 120],
+      ["Makeup lessons", 400, 90],
+      ["Airbrush makeup", 500, 75],
     ],
   ],
   [
     "Body & Wellness",
     [
-      ["Massage (relaxation, deep tissue)", 300],
-      ["Body scrubs and wraps", 350],
-      ["Spray tanning", 200],
-      ["Aromatherapy", 250],
+      ["Massage (relaxation, deep tissue)", 300, 60],
+      ["Body scrubs and wraps", 350, 75],
+      ["Spray tanning", 200, 30],
+      ["Aromatherapy", 250, 60],
     ],
   ],
   [
     "Bridal & Event Packages",
     [
-      ["Bridal hair and makeup", 1500],
-      ["Bridesmaid and mother-of-the-bride packages", 700],
-      ["Prom, graduation and photoshoot styling", 500],
-      ["On-location or mobile services", 400],
+      ["Bridal hair and makeup", 1500, 300],
+      ["Bridesmaid and mother-of-the-bride packages", 700, 180],
+      ["Prom, graduation and photoshoot styling", 500, 150],
+      ["On-location or mobile services", 400, 60],
     ],
   ],
   [
     "Men's Grooming",
     [
-      ["Haircuts and fades", 60],
-      ["Hot-towel shave", 70],
-      ["Beard treatments", 90],
-      ["Facials for men", 200],
+      ["Haircuts and fades", 60, 30],
+      ["Hot-towel shave", 70, 30],
+      ["Beard treatments", 90, 30],
+      ["Facials for men", 200, 45],
     ],
   ],
   [
     "Consultations & Add-ons",
     [
-      ["Hair or beauty consultation", 0],
-      ["Aftercare advice", 0],
-      ["Gift card or membership enquiry", null],
+      ["Hair or beauty consultation", 0, 30],
+      ["Aftercare advice", 0, 15],
+      ["Gift card or membership enquiry", null, 15],
     ],
   ],
 ];
@@ -258,8 +360,11 @@ const art = (p) =>
       .map((w) => w[0])
       .join(""),
   )}<em>${esc(p.cat)}</em><img src="${esc(imgSrc(p.name, p.img))}" alt="${esc(p.name)}" loading="lazy" onerror="imgNext(this)"></div>`;
-const card = (p) =>
-  `<div class="prod">${art(p)}<b>${esc(p.name)}</b><div class="row"><span>${money(p.price)}</span><button data-add="${p.id}" ${p.stock < 1 ? "disabled" : ""}>${p.stock < 1 ? "Sold out" : "Add"}</button></div><small>${p.stock < 1 ? "" : p.stock <= 5 ? "Only " + p.stock + " left" : "In stock"}</small></div>`;
+const card = (p) => {
+  const w = wish.get().map(String).includes(String(p.id)),
+    link = "product.html?id=" + p.id;
+  return `<div class="prod"><div class="aw"><a href="${link}" aria-label="${esc(p.name)}">${art(p)}</a><button class="heart${w ? " on" : ""}" data-wish="${p.id}" aria-label="Save to wishlist">${w ? "♥" : "♡"}</button></div><a class="pn" href="${link}"><b>${esc(p.name)}</b></a><div class="row"><span>${money(p.price)}</span><button data-add="${p.id}" ${p.stock < 1 ? "disabled" : ""}>${p.stock < 1 ? "Sold out" : "Add"}</button></div><small>${p.stock < 1 ? "" : p.stock <= (p.threshold || 5) ? "Only " + p.stock + " left" : "In stock"}</small></div>`;
+};
 const ICON = {
   wa: '<path d="M12 3a9 9 0 0 0-7.8 13.5L3 21l4.6-1.2A9 9 0 1 0 12 3z"/><path d="M9 8c0 4 3 7 7 7l1-2-2.5-1-1 1c-1-.4-2-1.4-2.4-2.4l1-1L11 8z"/>',
   ig: '<rect x="3.5" y="3.5" width="17" height="17" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17" cy="7" r=".6"/>',
@@ -275,20 +380,50 @@ function loadPaystack() {
     document.head.appendChild(t);
   });
 }
+async function notify(type, text, link) {
+  const N = await db.get("notifications");
+  N.unshift({
+    id: Date.now() + Math.random(),
+    ts: new Date().toISOString(),
+    type,
+    text,
+    link,
+    read: false,
+  });
+  await db.put("notifications", N.slice(0, 200));
+}
+async function logEvent(user, action, entity, ref, detail) {
+  const A = await db.get("audit");
+  A.unshift({
+    id: Date.now() + Math.random(),
+    ts: new Date().toISOString(),
+    user,
+    action,
+    entity,
+    ref,
+    detail,
+  });
+  await db.put("audit", A.slice(0, 1000));
+}
 function shell() {
+  if (document.body.dataset.admin) {
+    document.body.insertAdjacentHTML(
+      "afterbegin",
+      `<header class="top"><a class="brand" href="index.html">${mono}<span class="serif">Mane Maison</span></a><span class="abadge">Management</span></header><div id="toast" role="status"></div>`,
+    );
+    return;
+  }
   const cur = document.body.dataset.page,
-    ceo = sessionStorage.mm_ceo,
     L = [
       ["index", "Home"],
       ["shop", "Shop"],
       ["bookings", "Book"],
       ["about", "About"],
       ["contact", "Contact"],
-      ...(ceo ? [["dashboard", "CEO"]] : []),
     ];
   document.body.insertAdjacentHTML(
     "afterbegin",
-    `<header class="top"><a class="brand" href="index.html">${mono}<span class="serif">Mane Maison</span></a><button class="cartbtn" id="cb">Bag <b id="cc">0</b></button></header><nav id="nav" aria-label="Main"><i class="pill"></i>${L.map(([h, t]) => `<a href="${h}.html"${h == cur ? ' class="on" aria-current="page"' : ""}>${t}</a>`).join("")}</nav><div id="ov"></div><aside id="drawer" aria-label="Bag"></aside><div id="toast" role="status"></div>`,
+    `<header class="top"><a class="brand" href="index.html">${mono}<span class="serif">Mane Maison</span></a><div class="hr"><a class="cartbtn" href="wishlist.html" aria-label="Wishlist">♡ <b id="wc">0</b></a><button class="cartbtn" id="cb">Bag <b id="cc">0</b></button></div></header><nav id="nav" aria-label="Main"><i class="pill"></i>${L.map(([h, t]) => `<a href="${h}.html"${h == cur ? ' class="on" aria-current="page"' : ""}>${t}</a>`).join("")}</nav><div id="ov"></div><aside id="drawer" aria-label="Bag"></aside><div id="toast" role="status"></div>`,
   );
   const soc = [
     ["wa", "WhatsApp", "https://wa.me/" + CFG.WA],
@@ -298,7 +433,7 @@ function shell() {
   ];
   document.body.insertAdjacentHTML(
     "beforeend",
-    `<footer><div class="wrap"><div class="serif" style="font-size:2rem">for the love of beauty</div><div class="soc">${soc.map((x) => `<a href="${x[2]}" target="_blank" rel="noopener" aria-label="${x[1]}"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">${ICON[x[0]]}</svg></a>`).join("")}</div><div><a href="tel:0537751108">Call / WhatsApp 0537751108</a><a href="mailto:orders@manemaisonbeauty.com">Wig store · orders@manemaisonbeauty.com</a><a href="mailto:bookings@manemaisonbeauty.com">Hair studio · bookings@manemaisonbeauty.com</a><a href="mailto:office@manemaisonbeauty.com">Accounts & CEO · office@manemaisonbeauty.com</a></div><small>www.manemaisonbeauty.com · <a href="dashboard.html" style="display:inline;opacity:.5">Staff</a></small></div></footer>`,
+    `<footer><div class="wrap"><div class="serif" style="font-size:2rem">for the love of beauty</div><p><a href="track.html">Track your order or booking</a></p><div class="soc">${soc.map((x) => `<a href="${x[2]}" target="_blank" rel="noopener" aria-label="${x[1]}"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">${ICON[x[0]]}</svg></a>`).join("")}</div><div><a href="tel:0537751108">Call / WhatsApp 0537751108</a><a href="mailto:orders@manemaisonbeauty.com">Wig store · orders@manemaisonbeauty.com</a><a href="mailto:bookings@manemaisonbeauty.com">Hair studio · bookings@manemaisonbeauty.com</a><a href="mailto:office@manemaisonbeauty.com">Accounts & CEO · office@manemaisonbeauty.com</a></div><small>www.manemaisonbeauty.com</small></div></footer>`,
   );
   const nv = $("#nav"),
     pl = $(".pill", nv),
@@ -324,6 +459,7 @@ function shell() {
   addEventListener("load", go);
   addEventListener("resize", go);
   cart.set(cart.get());
+  wish.set(wish.get());
   $("#cb").onclick = () => drawer(1);
   $("#ov").onclick = () => drawer(0);
   document.addEventListener("click", (e) => {
@@ -331,9 +467,18 @@ function shell() {
     if (a) {
       const c = cart.get(),
         i = c.find((x) => x.id == a.dataset.add);
-      i ? i.q++ : c.push({ id: +a.dataset.add, q: 1 });
+      i ? i.q++ : c.push({ id: pid(a.dataset.add), q: 1 });
       cart.set(c);
       toast("Added to your bag");
+    }
+    const h = e.target.closest("[data-wish]");
+    if (h) {
+      const id = pid(h.dataset.wish),
+        w = wish.get(),
+        i = w.map(String).indexOf(String(id));
+      i < 0 ? w.push(id) : w.splice(i, 1);
+      wish.set(w);
+      toast(i < 0 ? "Saved to your wishlist" : "Removed from your wishlist");
     }
   });
 }
@@ -344,15 +489,21 @@ async function drawer(o) {
   if (!o) return;
   const P = await db.get("products"),
     c = cart.get().filter((i) => P.find((p) => p.id == i.id)),
-    tot = c.reduce((a, i) => a + i.q * P.find((p) => p.id == i.id).price, 0);
+    pr = (i) => P.find((p) => p.id == i.id),
+    sub = c.reduce((a, i) => a + i.q * pr(i).price, 0);
+  let adj = { disc: 0, promo: null, gift: 0, card: null, total: sub, due: sub };
   d.innerHTML = `<div class="dh"><h2>Your bag</h2><button class="ghost" id="x">Close</button></div>${
     c
-      .map((i) => {
-        const p = P.find((p) => p.id == i.id);
-        return `<div class="line"><span>${esc(p.name)}<br><small>${money(p.price)}</small></span><div><button data-q="${i.id}:-1" aria-label="Fewer">−</button> ${i.q} <button data-q="${i.id}:1" aria-label="More">+</button> <button class="ghost" data-rm="${i.id}">Remove</button></div></div>`;
-      })
+      .map(
+        (i) =>
+          `<div class="line"><span>${esc(pr(i).name)}<br><small>${money(pr(i).price)}</small></span><div><button data-q="${i.id}:-1" aria-label="Fewer">−</button> ${i.q} <button data-q="${i.id}:1" aria-label="More">+</button> <button class="ghost" data-rm="${i.id}">Remove</button></div></div>`,
+      )
       .join("") || "<p>Your bag is empty. Browse the shop to add something.</p>"
-  }${c.length ? `<p><button class="ghost" id="clr">Clear bag</button></p><p class="serif tot">Total ${money(tot)}</p><form id="co"><input name="n" placeholder="Full name" required><input name="p" type="tel" placeholder="Phone" required><input name="e" type="email" placeholder="Email" required><textarea name="a" placeholder="Delivery address" required></textarea><fieldset class="pay"><legend>Payment method</legend><label><input type="radio" name="m" value="online" checked> Card or Mobile Money (online)</label><label><input type="radio" name="m" value="momo"> Send Mobile Money to ${CFG.MOMO}</label><label><input type="radio" name="m" value="cod"> Pay on delivery</label></fieldset><input name="t" id="txn" placeholder="Mobile Money transaction ID" hidden><button>Place order</button></form>` : ""}`;
+  }${
+    c.length
+      ? `<p><button class="ghost" id="clr">Clear bag</button></p><div class="g2 codes"><input id="dc" placeholder="Discount code" autocomplete="off"><input id="gc" placeholder="Gift card code" autocomplete="off"></div><p><button type="button" class="ghost" id="ap">Apply codes</button></p><div class="sumbox" id="sumbox"></div><form id="co"><input name="n" placeholder="Full name" required><input name="p" type="tel" placeholder="Phone" required><input name="e" type="email" placeholder="Email" required><textarea name="a" placeholder="Delivery address" required></textarea><fieldset class="pay"><legend>Payment method</legend><label><input type="radio" name="m" value="online" checked> Card or Mobile Money (online)</label><label><input type="radio" name="m" value="momo"> Send Mobile Money to ${CFG.MOMO}</label><label><input type="radio" name="m" value="cod"> Pay on delivery</label></fieldset><input name="t" id="txn" placeholder="Mobile Money transaction ID" hidden><button>Place order</button></form>`
+      : ""
+  }`;
   $("#x").onclick = () => drawer(0);
   $$("[data-q]", d).forEach(
     (b) =>
@@ -382,38 +533,104 @@ async function drawer(o) {
     };
   const f = $("#co");
   if (!f) return;
+  const row = (l, v, cls) =>
+      `<div class="line${cls ? " " + cls : ""}"><span>${l}</span><b>${v}</b></div>`,
+    show = () => {
+      $("#sumbox").innerHTML =
+        row("Subtotal", money(sub)) +
+        (adj.promo
+          ? row("Discount (" + adj.promo.code + ")", "−" + money(adj.disc))
+          : "") +
+        (adj.card
+          ? row("Gift card (" + adj.card.code + ")", "−" + money(adj.gift))
+          : "") +
+        row("To pay", money(adj.due), "big");
+    },
+    calc = async () => {
+      const a = await checkPromo($("#dc").value, sub, "shop");
+      if (a.error) return (toast(a.error), null);
+      const total = money2(sub - a.amount),
+        g = await checkGift($("#gc").value, total);
+      if (g.error) return (toast(g.error), null);
+      adj = {
+        disc: a.amount,
+        promo: a.promo || null,
+        gift: g.amount,
+        card: g.card || null,
+        total,
+        due: money2(total - g.amount),
+      };
+      show();
+      return adj;
+    };
+  show();
+  $("#ap").onclick = async () => {
+    if (await calc()) toast("Codes applied");
+  };
   $$("[name=m]", f).forEach(
     (r) =>
       (r.onchange = () => {
-        $("#txn").hidden = f.m.value != "momo";
+        $("#txn").hidden = f.elements.m.value != "momo";
       }),
   );
   f.onsubmit = async (e) => {
     e.preventDefault();
+    const a = await calc();
+    if (!a) return;
     const v = Object.fromEntries(new FormData(f));
-    const finish = async (status, ref) => {
-      const O = await db.get("orders");
+    const finish = async (method, status, ref) => {
+      const O = await db.get("orders"),
+        no = nextRef(O, "MM-");
       c.forEach((i) => {
-        const p = P.find((p) => p.id == i.id);
+        const p = pr(i);
         p.stock = Math.max(0, p.stock - i.q);
       });
+      const now = new Date().toISOString();
       O.push({
         id: Date.now(),
+        ref: no,
         date: day(0),
         name: v.n,
         phone: v.p,
         email: v.e,
         address: v.a,
-        total: tot,
+        subtotal: sub,
+        discount: a.promo ? { code: a.promo.code, amount: a.disc } : null,
+        gift: a.card ? { code: a.card.code, amount: a.gift } : null,
+        total: a.total,
+        payable: a.due,
         status: "Pending",
+        history: [{ ts: now, status: "Pending" }],
         items: c,
-        pay: { method: v.m, status, ref },
+        pay: { method, status, ref },
       });
       await db.put("orders", O);
       await db.put("products", P);
+      await useCodes(a.promo, a.card, a.gift, no);
+      const units = c.reduce((x, i) => x + i.q, 0);
+      await logEvent(
+        "Customer",
+        "Placed",
+        "Order",
+        no + " · " + v.n,
+        `${money(a.total)} · ${units} items`,
+      );
+      await notify(
+        "order",
+        `New order ${no} from ${v.n} · ${money(a.total)}`,
+        "admin-orders.html",
+      );
+      for (const p of P.filter(
+        (p) => c.some((i) => i.id == p.id) && p.stock <= (p.threshold || 5),
+      ))
+        await notify(
+          "stock",
+          `Low stock: ${p.name} (${p.stock} left)`,
+          "admin-inventory.html",
+        );
       const byCat = {};
       c.forEach((i) => {
-        const p = P.find((p) => p.id == i.id);
+        const p = pr(i);
         (byCat[p.cat] = byCat[p.cat] || []).push({ p, q: i.q });
       });
       let n = 0;
@@ -427,14 +644,16 @@ async function drawer(o) {
         online: "Card / Mobile Money (online)",
         momo: "Mobile Money transfer",
         cod: "Pay on delivery",
-      }[v.m];
-      wa(
-        `*Mane Maison Store*\n*New Order*\n\n${lines}\n\n*Total items: ${c.reduce((a, i) => a + i.q, 0)}*\n*Total: ${money(tot)}*\nPayment: ${pm} (${status}${ref ? ", ref " + ref : ""})\nName: ${v.n}\nPhone: ${v.p}\nAddress: ${v.a}`,
-      );
+        gift: "Gift card",
+      }[method];
+      const msg = `*Mane Maison Store*\n*New Order* ${no}\n\n${lines}\n\n*Total items: ${units}*\nSubtotal: ${money(sub)}\n${a.promo ? `Discount (${a.promo.code}): -${money(a.disc)}\n` : ""}${a.card ? `Gift card (${a.card.code}): -${money(a.gift)}\n` : ""}*Total: ${money(a.total)}*\n*To pay: ${money(a.due)}*\nPayment: ${pm} (${status}${ref ? ", ref " + ref : ""})\nName: ${v.n}\nPhone: ${v.p}\nAddress: ${v.a}\nTrack: ${trackUrl()}`;
+      wa(msg);
       cart.set([]);
-      drawer(0);
-      toast("Order placed. We will confirm shortly.");
+      d.innerHTML = `<div class="dh"><h2>Thank you!</h2><button class="ghost" id="x2">Close</button></div><div class="sumbox"><p>Your order number is</p><p class="serif" style="font-size:2.4rem">${esc(no)}</p><p>Keep it to check your order status any time.</p></div><p><a class="btn" href="track.html">Track my order</a></p><p><button class="ghost" id="ws">Send details on WhatsApp</button></p>`;
+      $("#x2").onclick = () => drawer(0);
+      $("#ws").onclick = () => wa(msg);
     };
+    if (a.due == 0) return finish("gift", "Paid by gift card", a.card ? a.card.code : "");
     if (v.m == "online") {
       if (!CFG.PAYSTACK_KEY)
         return toast(
@@ -444,10 +663,10 @@ async function drawer(o) {
       PaystackPop.setup({
         key: CFG.PAYSTACK_KEY,
         email: v.e,
-        amount: tot * 100,
+        amount: Math.round(a.due * 100),
         currency: "GHS",
         callback: (r) => {
-          finish("Paid online", r.reference);
+          finish("online", "Paid online", r.reference);
         },
         onClose: () => toast("Payment cancelled"),
       }).openIframe();
@@ -458,9 +677,9 @@ async function drawer(o) {
         $("#txn").hidden = false;
         return toast("Enter your Mobile Money transaction ID");
       }
-      return finish("Awaiting confirmation", v.t);
+      return finish("momo", "Awaiting confirmation", v.t);
     }
-    finish("Pay on delivery", "");
+    finish("cod", "Pay on delivery", "");
   };
 }
 const nice = (s) => {
@@ -558,11 +777,14 @@ const pages = {
         ([c, items], ci) =>
           `<a class="prod" href="bookings.html"><div class="art has" style="--h:${(ci * 53) % 360}">${esc(c[0])}<em>${items.length} services</em><img src="${esc(imgSrc(c, "cat-" + slug(c) + ".jpg"))}" alt="${esc(c)}" loading="lazy" onerror="imgNext(this)"></div><b>${esc(c)}</b></a>`,
       ).join("");
-    const P = (await db.get("products")).sort((a, b) => b.sold - a.sold).slice(0, 4);
+    const P = (await db.get("products"))
+      .filter((p) => p.active !== false)
+      .sort((a, b) => b.sold - a.sold)
+      .slice(0, 4);
     $("#feat").innerHTML = P.map(card).join("");
   },
   async shop() {
-    const P = await db.get("products"),
+    const P = (await db.get("products")).filter((p) => p.active !== false),
       cats = ["All", ...new Set(P.map((p) => p.cat))],
       r = (c) => {
         $("#grid").innerHTML = P.filter((p) => c == "All" || p.cat == c)
@@ -575,18 +797,139 @@ const pages = {
     r("All");
   },
   async bookings() {
-    const B = await db.get("bookings");
-    let t = "";
+    const [B, S0] = await Promise.all([db.get("bookings"), getSettings()]),
+      S = studioCfg(S0),
+      sty = S.stylists.filter((x) => x.active !== false),
+      dt = $("#dt");
+    let pick = null,
+      adj = null;
+    $("#sty").innerHTML =
+      `<option value="any">Any available stylist</option>` +
+      sty.map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join("");
     $("#svc").innerHTML = SERVICES.map(
       ([c, items], ci) =>
-        `<details class="cat"${ci == 0 ? " open" : ""}><summary><span class="ci">${esc(c[0])}<img src="${esc(imgSrc(c, "cat-" + slug(c) + ".jpg"))}" alt="" loading="lazy" onerror="imgNext(this)"></span><b>${esc(c)}</b><em class="cnt"></em></summary><div class="opts"><label class="all"><input type="checkbox" data-all="${ci}"> <span>Select all</span></label>${items.map(([x, pr]) => `<label><input type="checkbox" data-cat="${ci}" data-p="${pr == null ? "" : pr}" value="${esc(x)}"> <span>${esc(x)}</span><b class="pr">${priceTxt(pr)}</b></label>`).join("")}</div></details>`,
+        `<details class="cat"${ci == 0 ? " open" : ""}><summary><span class="ci">${esc(c[0])}<img src="${esc(imgSrc(c, "cat-" + slug(c) + ".jpg"))}" alt="" loading="lazy" onerror="imgNext(this)"></span><b>${esc(c)}</b><em class="cnt"></em></summary><div class="opts"><label class="all"><input type="checkbox" data-all="${ci}"> <span>Select all</span></label>${items.map(([x, pr, mn]) => `<label><input type="checkbox" data-cat="${ci}" data-p="${pr == null ? "" : pr}" data-m="${mn}" value="${esc(x)}"> <span>${esc(x)}<small> · ${durTxt(mn)}</small></span><b class="pr">${priceTxt(pr)}</b></label>`).join("")}</div></details>`,
     ).join("");
     const sum = () => {
       const all = $$("#svc input[data-cat]:checked");
       let tot = 0,
-        ask = 0;
-      all.forEach((i) => (i.dataset.p === "" ? ask++ : (tot += +i.dataset.p)));
-      return { n: all.length, tot, ask };
+        ask = 0,
+        mins = 0;
+      all.forEach((i) => {
+        mins += +i.dataset.m;
+        i.dataset.p === "" ? ask++ : (tot += +i.dataset.p);
+      });
+      return { n: all.length, tot, ask, mins };
+    };
+    const slots = () => {
+      const date = dt.value,
+        mins = sum().mins || S.slot,
+        out = [];
+      if (
+        S.closedDays.includes(new Date(date + "T12:00").getDay()) ||
+        S.closedDates.includes(date)
+      )
+        return { closed: true, out };
+      const want =
+          $("#sty").value == "any" ? sty : sty.filter((x) => x.id == $("#sty").value),
+        now = new Date(),
+        nowM = now.getHours() * 60 + now.getMinutes();
+      for (let m = toMin(S.open); m + mins <= toMin(S.close); m += S.slot) {
+        if (date == day(0) && m <= nowM) continue;
+        const free = want.filter(
+          (x) =>
+            !B.some(
+              (b) =>
+                (b.status || "Pending") != "Cancelled" &&
+                b.date == date &&
+                String(b.stylistId || sty[0].id) == String(x.id) &&
+                m < toMin(b.time) + (b.mins || S.slot) &&
+                toMin(b.time) < m + mins,
+            ),
+        );
+        out.push({ time: fmtMin(m), free });
+      }
+      return { out };
+    };
+    const draw = () => {
+      const prev = pick && pick.time,
+        r = slots();
+      pick = null;
+      $("#sl").innerHTML = r.closed
+        ? `<p class="meta full">The studio is closed on this day. Please choose another date.</p>`
+        : r.out.length
+          ? r.out
+              .map(
+                (x, i) =>
+                  `<button type="button" data-i="${i}" ${x.free.length ? "" : "disabled"}>${x.time}</button>`,
+              )
+              .join("")
+          : `<p class="meta full">No time is long enough for these services on this day. Try another date or fewer services.</p>`;
+      $$("#sl button").forEach(
+        (b) =>
+          (b.onclick = () => {
+            pick = r.out[+b.dataset.i];
+            $$("#sl button").forEach((x) => x.classList.toggle("on", x == b));
+          }),
+      );
+      if (prev) {
+        const again = $$("#sl button").find((b) => b.textContent == prev && !b.disabled);
+        if (again) again.click();
+      }
+    };
+    const calc = async () => {
+      const s = sum(),
+        a = await checkPromo($("#dc").value, s.tot, "studio");
+      if (a.error) return { error: a.error };
+      const total = money2(s.tot - a.amount),
+        g = await checkGift($("#gc").value, total);
+      if (g.error) return { error: g.error };
+      const full = S.deposit.on
+          ? money2(
+              S.deposit.type == "percent"
+                ? (total * S.deposit.value) / 100
+                : Math.min(S.deposit.value, total),
+            )
+          : 0,
+        dep = Math.max(0, money2(full - g.amount));
+      return {
+        s,
+        sub: s.tot,
+        disc: a.amount,
+        promo: a.promo || null,
+        total,
+        gift: g.amount,
+        card: g.card || null,
+        full,
+        dep,
+        balance: money2(total - g.amount - dep),
+      };
+    };
+    const bill = async () => {
+      adj = await calc();
+      const box = $("#bill"),
+        fs = $("#depay");
+      if (adj.error) {
+        box.innerHTML = `<p class="meta">${esc(adj.error)}</p>`;
+        fs.hidden = true;
+        return;
+      }
+      const row = (l, v, cls) =>
+        `<div class="line${cls ? " " + cls : ""}"><span>${l}</span><b>${v}</b></div>`;
+      box.innerHTML = adj.s.n
+        ? row("Services", money(adj.sub)) +
+          (adj.promo
+            ? row("Discount (" + adj.promo.code + ")", "−" + money(adj.disc))
+            : "") +
+          row("Total", money(adj.total)) +
+          (adj.card
+            ? row("Gift card (" + adj.card.code + ")", "−" + money(adj.gift))
+            : "") +
+          (adj.full ? row("Deposit to hold your slot", money(adj.dep), "big") : "") +
+          (adj.full ? row("Balance at the studio", money(adj.balance)) : "")
+        : "";
+      fs.hidden = !(adj.dep > 0);
+      if (!fs.hidden && S.deposit.note) $("#depnote").textContent = S.deposit.note;
     };
     const upd = () => {
       $$("#svc .cnt").forEach((el, i) => {
@@ -600,8 +943,10 @@ const pages = {
       });
       const s = sum();
       $("#sel").textContent = s.n
-        ? `${s.n} ${s.n > 1 ? "services" : "service"} · Total ${money(s.tot)}${s.ask ? ` + ${s.ask} on request` : ""}`
+        ? `${s.n} ${s.n > 1 ? "services" : "service"} · ${durTxt(s.mins)} · Total ${money(s.tot)}${s.ask ? ` + ${s.ask} on request` : ""}`
         : "";
+      draw();
+      bill();
     };
     $("#svc").onchange = (e) => {
       const a = e.target.dataset.all;
@@ -609,27 +954,23 @@ const pages = {
         $$(`#svc input[data-cat="${a}"]`).forEach((i) => (i.checked = e.target.checked));
       upd();
     };
-    const dt = $("#dt");
-    dt.min = dt.value = day(0);
-    const draw = () => {
-      const taken = B.filter((b) => b.date == dt.value).map((b) => b.time);
-      t = "";
-      $("#sl").innerHTML = [9, 10, 11, 12, 13, 14, 15, 16, 17]
-        .map((h) => {
-          const k = (h < 10 ? "0" : "") + h + ":00";
-          return `<button type="button" ${taken.includes(k) ? "disabled" : ""}>${k}</button>`;
-        })
-        .join("");
-      $$("#sl button").forEach(
-        (b) =>
-          (b.onclick = () => {
-            t = b.textContent;
-            $$("#sl button").forEach((x) => x.classList.toggle("on", x == b));
-          }),
-      );
+    $("#sty").onchange = draw;
+    $("#ap").onclick = async () => {
+      await bill();
+      toast(adj.error || "Codes applied");
     };
+    const ml = $("[name=m][value=momo]");
+    if (ml) ml.nextSibling.textContent = " Send Mobile Money to " + CFG.MOMO;
+    $$("[name=m]").forEach(
+      (r) =>
+        (r.onchange = () => {
+          $("#btx").hidden = $("#bf").elements.m.value != "momo";
+        }),
+    );
+    dt.min = dt.value = day(0);
     dt.onchange = draw;
     draw();
+    bill();
     $("#bf").onsubmit = async (e) => {
       e.preventDefault();
       const grp = SERVICES.map(([c], ci) => [
@@ -640,37 +981,104 @@ const pages = {
         })),
       ]).filter((g) => g[1].length);
       if (!grp.length) return toast("Select at least one service");
-      if (!t) return toast("Pick a time slot first");
-      const v = Object.fromEntries(new FormData(e.target));
-      const s = sum();
-      let n = 0;
-      const lines = grp
-        .map(
-          ([c, items]) =>
-            `*${c}*\n${items.map((x) => `${++n}. ${x.name} — ${priceTxt(x.price)}`).join("\n")}`,
-        )
-        .join("\n\n");
-      const msg = `*Mane Maison Studio*\n*Studio Booking Request*\n\n${lines}\n\n*Total items: ${s.n}*\n*Total: ${money(s.tot)}*${s.ask ? ` (+ ${s.ask} priced on request)` : ""}\n\nDate: ${nice(dt.value)}\nTime: ${t}\nClient: ${v.n}\nContact: ${v.p}`;
-      notifyBooking(msg);
-      B.push({
-        id: Date.now(),
-        date: dt.value,
-        time: t,
-        service: grp
-          .map(([c, items]) => c + ": " + items.map((x) => x.name).join(", "))
-          .join(" | "),
-        services: Object.fromEntries(grp),
-        count: s.n,
-        total: s.tot,
-        name: v.n,
-        phone: v.p,
-      });
-      await db.put("bookings", B);
-      toast("Booking sent to WhatsApp and email");
-      $$("#svc input").forEach((i) => (i.checked = false));
-      e.target.n.value = e.target.p.value = "";
-      upd();
-      draw();
+      if (!pick) return toast("Pick a time slot first");
+      const a = await calc();
+      if (a.error) return toast(a.error);
+      const v = Object.fromEntries(new FormData(e.target)),
+        st = pick.free[0],
+        s = a.s,
+        finish = async (method, status, ref) => {
+          const no = nextRef(B, "BK-");
+          let n = 0;
+          const lines = grp
+              .map(
+                ([c, items]) =>
+                  `*${c}*\n${items.map((x) => `${++n}. ${x.name} — ${priceTxt(x.price)}`).join("\n")}`,
+              )
+              .join("\n\n"),
+            depLine = a.full
+              ? `Deposit: ${money(a.full)} (${status}${ref ? ", ref " + ref : ""})\nBalance at studio: ${money(a.balance)}\n`
+              : "",
+            msg = `*Mane Maison Studio*\n*Studio Booking Request* ${no}\n\n${lines}\n\n*Total items: ${s.n}*\nServices: ${money(a.sub)}\n${a.promo ? `Discount (${a.promo.code}): -${money(a.disc)}\n` : ""}${a.card ? `Gift card (${a.card.code}): -${money(a.gift)}\n` : ""}*Total: ${money(a.total)}*\n${depLine}\nDate: ${nice(dt.value)}\nTime: ${pick.time} (${durTxt(s.mins || S.slot)})\nStylist: ${st.name}\nClient: ${v.n}\nContact: ${v.p}\nTrack: ${trackUrl()}`;
+          notifyBooking(msg);
+          B.push({
+            id: Date.now(),
+            ref: no,
+            date: dt.value,
+            time: pick.time,
+            mins: s.mins || S.slot,
+            stylistId: st.id,
+            stylist: st.name,
+            service: grp
+              .map(([c, items]) => c + ": " + items.map((x) => x.name).join(", "))
+              .join(" | "),
+            services: Object.fromEntries(grp),
+            count: s.n,
+            subtotal: a.sub,
+            discount: a.promo ? { code: a.promo.code, amount: a.disc } : null,
+            giftUsed: a.gift,
+            total: a.total,
+            deposit: {
+              required: a.full,
+              amount: a.dep,
+              status: a.full ? status : "Not required",
+              method,
+              ref,
+            },
+            status: "Pending",
+            name: v.n,
+            phone: v.p,
+            email: v.e || "",
+          });
+          await db.put("bookings", B);
+          await useCodes(a.promo, a.card, a.gift, no);
+          await logEvent(
+            "Customer",
+            "Requested",
+            "Booking",
+            no + " · " + v.n,
+            `${nice(dt.value)} ${pick.time} · ${s.n} services · ${money(a.total)}`,
+          );
+          await notify(
+            "booking",
+            `New booking ${no}: ${v.n} · ${nice(dt.value)} at ${pick.time}`,
+            "admin-bookings.html",
+          );
+          $("#done").hidden = false;
+          $("#done").innerHTML =
+            `<p>Booking received. Your booking number is</p><p class="serif" style="font-size:2.4rem">${esc(no)}</p><p>${nice(dt.value)} at ${pick.time} with ${esc(st.name)}.</p><p><a class="btn" href="track.html">Track my booking</a> <button type="button" class="ghost" id="ws">Send details on WhatsApp</button></p>`;
+          $("#ws").onclick = () => wa(msg);
+          toast("Booking sent");
+          $$("#svc input").forEach((i) => (i.checked = false));
+          e.target.elements.n.value = e.target.elements.p.value = "";
+          upd();
+          $("#done").scrollIntoView({ behavior: "smooth" });
+        };
+      if (a.full && a.dep == 0)
+        return finish("gift", "Paid by gift card", a.card ? a.card.code : "");
+      if (!a.full) return finish("none", "Not required", "");
+      if (v.m == "online") {
+        if (!CFG.PAYSTACK_KEY)
+          return toast("Online payment is not connected yet. Choose Mobile Money.");
+        if (!v.e) return toast("Enter your email to pay online");
+        await loadPaystack();
+        PaystackPop.setup({
+          key: CFG.PAYSTACK_KEY,
+          email: v.e,
+          amount: Math.round(a.dep * 100),
+          currency: "GHS",
+          callback: (r) => {
+            finish("online", "Paid online", r.reference);
+          },
+          onClose: () => toast("Payment cancelled"),
+        }).openIframe();
+        return;
+      }
+      if (!v.t) {
+        $("#btx").hidden = false;
+        return toast("Enter your Mobile Money transaction ID");
+      }
+      finish("momo", "Awaiting confirmation", v.t);
     };
   },
   contact() {
@@ -683,159 +1091,7 @@ const pages = {
       toast("Message sent. We will reply soon.");
     };
   },
-  async dashboard() {
-    const g = $("#gate"),
-      m = $("#main"),
-      pin = $("#pin"),
-      btn = $("#lock");
-    const open = !!sessionStorage.mm_ceo;
-    pin.hidden = open;
-    btn.textContent = open ? "Lock Dashboard" : "Unlock";
-    g.classList.toggle("open", open);
-    m.hidden = !open;
-    if (open) {
-      dash();
-      logoTools();
-    }
-    g.onsubmit = (e) => {
-      e.preventDefault();
-      if (sessionStorage.mm_ceo) {
-        sessionStorage.removeItem("mm_ceo");
-        return location.reload();
-      }
-      if (pin.value == CFG.PIN) {
-        sessionStorage.mm_ceo = 1;
-        return location.reload();
-      }
-      toast("Incorrect passcode");
-      g.classList.remove("shake");
-      void g.offsetWidth;
-      g.classList.add("shake");
-    };
-  },
 };
-async function dash() {
-  const [P, O, B] = await Promise.all(
-      ["products", "orders", "bookings"].map((c) => db.get(c)),
-    ),
-    rev = O.reduce((a, o) => a + o.total, 0),
-    low = P.filter((p) => p.stock <= 5).length,
-    up = B.filter((b) => b.date >= day(0)).length,
-    cr = P.reduce((a, p) => a + p.sold * p.price, 0),
-    wr = P.filter((p) => p.cat == "Wigs").reduce((a, p) => a + p.sold * p.price, 0);
-  const K = [
-    ["Revenue", rev, 1],
-    ["Orders", O.length],
-    ["Upcoming bookings", up],
-    ["Low stock items", low],
-  ];
-  $("#k").innerHTML = K.map(
-    (k) =>
-      `<div class="kpi"><b data-n="${k[1]}" data-m="${k[2] || ""}">0</b><small>${k[0]}</small></div>`,
-  ).join("");
-  $$("[data-n]").forEach((el) => {
-    const n = +el.dataset.n,
-      t0 = performance.now(),
-      f = (t) => {
-        const x = Math.min(1, (t - t0) / 1400),
-          v = Math.round(n * (1 - Math.pow(1 - x, 3)));
-        el.textContent = el.dataset.m ? money(v) : v;
-        if (x < 1) requestAnimationFrame(f);
-      };
-    requestAnimationFrame(f);
-  });
-  const R = [
-    ["Stock health", P.filter((p) => p.stock > 5).length / P.length],
-    [
-      "Orders delivered",
-      O.filter((o) => o.status == "Delivered").length / (O.length || 1),
-    ],
-    [
-      "Studio utilisation",
-      Math.min(1, B.filter((b) => b.date >= day(0) && b.date < day(7)).length / 63),
-    ],
-    ["Wig revenue share", wr / (cr || 1)],
-  ];
-  $("#r").innerHTML = R.map(
-    (r) =>
-      `<div class="ring"><svg viewBox="0 0 80 80"><circle class="bg" cx="40" cy="40" r="30"/><circle class="fg" cx="40" cy="40" r="30" data-p="${r[1]}" style="stroke-dasharray:0 189"/></svg><b>${Math.round(r[1] * 100)}%</b><small>${r[0]}</small></div>`,
-  ).join("");
-  const D = [...Array(7)].map((_, i) => day(i - 6)),
-    V = D.map((d) => O.filter((o) => o.date == d).reduce((a, o) => a + o.total, 0)),
-    mx = Math.max(...V, 1);
-  $("#b").innerHTML = D.map(
-    (d, i) =>
-      `<div data-h="${(V[i] / mx) * 100}" title="${money(V[i])}"><span>${d.slice(8)}</span></div>`,
-  ).join("");
-  requestAnimationFrame(() =>
-    setTimeout(() => {
-      $$(".fg").forEach((c) => (c.style.strokeDasharray = `${c.dataset.p * 188.5} 189`));
-      $$("[data-h]").forEach((b) => (b.style.height = b.dataset.h + "%"));
-    }, 60),
-  );
-  $("#inv").innerHTML =
-    `<tr><th>Product<th>Type<th>Price<th>Stock<th></tr>` +
-    P.map(
-      (p) =>
-        `<tr><td>${esc(p.name)}<td>${esc(p.cat)}<td>${money(p.price)}<td class="${p.stock <= 5 ? "low" : ""}"><button data-s="${p.id}:-1">−</button> ${p.stock} <button data-s="${p.id}:1">+</button><td><span class="stk" style="width:${Math.min(80, p.stock * 3)}px"></span></tr>`,
-    ).join("");
-  $("#ord").innerHTML =
-    `<tr><th>Date<th>Client<th>Total<th>Payment<th>Status</tr>` +
-    O.slice()
-      .reverse()
-      .slice(0, 10)
-      .map(
-        (o) =>
-          `<tr><td>${o.date}<td>${esc(o.name)}<td>${money(o.total)}<td>${esc(o.pay ? o.pay.status : "Paid")}<td><button class="ghost" data-o="${o.id}">${o.status}</button></tr>`,
-      )
-      .join("");
-  $("#bk").innerHTML =
-    `<tr><th>Date<th>Time<th>Service<th>Client<th>Total</tr>` +
-    B.filter((b) => b.date >= day(0))
-      .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time))
-      .map(
-        (b) =>
-          `<tr><td>${b.date}<td>${b.time}<td>${esc(b.service)}<td>${esc(b.name)}<td>${b.total == null ? "—" : money(b.total)}</tr>`,
-      )
-      .join("");
-  $$("[data-s]").forEach(
-    (b) =>
-      (b.onclick = async () => {
-        const [i, n] = b.dataset.s.split(":"),
-          p = P.find((x) => x.id == i);
-        p.stock = Math.max(0, p.stock + +n);
-        await db.put("products", P);
-        dash();
-      }),
-  );
-  $$("[data-o]").forEach(
-    (b) =>
-      (b.onclick = async () => {
-        const o = O.find((x) => x.id == b.dataset.o),
-          S = ["Pending", "Packed", "Delivered"];
-        o.status = S[(S.indexOf(o.status) + 1) % 3];
-        await db.put("orders", O);
-        dash();
-      }),
-  );
-  $("#np").onsubmit = async (e) => {
-    e.preventDefault();
-    const v = Object.fromEntries(new FormData(e.target));
-    P.push({
-      id: Date.now() % 1e6,
-      name: v.n,
-      cat: v.c,
-      price: +v.p,
-      stock: +v.s,
-      img: v.i || "",
-      sold: 0,
-    });
-    await db.put("products", P);
-    e.target.reset();
-    dash();
-    toast("Product added");
-  };
-}
 shell();
 applyLogo();
 pages[document.body.dataset.page]?.();
